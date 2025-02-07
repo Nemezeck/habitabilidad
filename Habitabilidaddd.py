@@ -11,26 +11,58 @@ from typing import Dict, List, Tuple, Set
 
 class CondicionesExternas:
     def __init__(self, iluminancia_exterior: float, hora_dia: int, clima: str):
-        self.iluminancia_exterior = iluminancia_exterior  # en lux
         self.hora_dia = hora_dia
         self.clima = clima
+        self.iluminancia_exterior = self.calcular_iluminancia()
 
+    def calcular_iluminancia(self) -> float:
+        """ Ajusta la iluminancia exterior basada en la hora del día y el clima. """
+        # Valores base de iluminancia (lux) según la hora
+        iluminancia_maxima = 100000  # Máximo a mediodía en un día despejado
+        iluminancia_minima = 10      # Noche
 
+        # Ajuste de iluminancia basado en la hora del día (Curva senoidal)
+        if 6 <= self.hora_dia <= 18:  # De 6 AM a 6 PM
+            factor_hora = math.sin(math.pi * (self.hora_dia - 6) / 12)  # 0 a 1
+            iluminancia_base = iluminancia_minima + (iluminancia_maxima - iluminancia_minima) * factor_hora
+        else:  # Noche
+            iluminancia_base = iluminancia_minima
+
+        # Ajuste por clima
+        factores_climaticos = {
+            "despejado": 1.0,
+            "parcialmente nublado": 0.6,
+            "nublado": 0.3,
+            "lluvioso": 0.1
+        }
+        factor_clima = factores_climaticos.get(self.clima.lower(), 1.0)  # Default a 1.0 si el clima no es reconocido
+
+        iluminancia_final = iluminancia_base * factor_clima
+        return max(iluminancia_final, 0)  # Asegurar que nunca sea negativo
 class Ventana:
     def __init__(self, area: float, factor_transmision_luz: float, orientacion: str):
-        self.area = area  # en m²
-        self.factor_transmision_luz = factor_transmision_luz
+        self.area = max(0, area)  # Evitar valores negativos
+        self.factor_transmision_luz = max(0, min(1, factor_transmision_luz))  # Debe estar entre 0 y 1
         self.orientacion = orientacion
         self.apertura_persiana = 100  # porcentaje
 
     def calcular_aporte_luz_natural(self, condiciones_externas: CondicionesExternas) -> float:
-        return (self.area * self.factor_transmision_luz *
-                condiciones_externas.iluminancia_exterior *
-                (self.apertura_persiana / 100))
+        if self.area == 0 or self.factor_transmision_luz == 0 or condiciones_externas.iluminancia_exterior == 0:
+            return 0  # Evitar cálculos innecesarios
+
+        aporte_luz = (self.area * self.factor_transmision_luz *
+                      condiciones_externas.iluminancia_exterior *
+                      (self.apertura_persiana / 100))
+
+        # Depuración
+        print(f"Área: {self.area} m², Factor transmisión: {self.factor_transmision_luz}, "
+              f"Iluminancia exterior: {condiciones_externas.iluminancia_exterior} lux, "
+              f"Apertura persiana: {self.apertura_persiana}%, Aporte luz: {aporte_luz} lux")
+
+        return aporte_luz
 
     def ajustar_persianas(self, porcentaje: int):
         self.apertura_persiana = max(0, min(100, porcentaje))
-
 
 class DispositivoIluminacion:
     def __init__(self, tipo: str, potencia: float, eficiencia_luminica: float,
@@ -205,7 +237,7 @@ class Espacio:
                  actividad_principal: str, duracion_actividad: float, 
                  x: float, y: float, z: int, es_exterior: bool = False):
         self.nombre = nombre
-        self.area = area
+        self.area = max(area, 0.1)  # Evitar área cero
         self.capacidad_ocupacion = capacidad_ocupacion
         self.actividad_principal = actividad_principal
         self.duracion_actividad = duracion_actividad
@@ -216,18 +248,17 @@ class Espacio:
         self.ventanas = []
         self.dispositivos_iluminacion = []
         self.ocupantes = []
-        self.nivel_iluminacion = 0
+        self.nivel_iluminacion = 0.0  # Inicializar iluminación
         self.superficies = []
         self.coloracion = ColoracionEspacio(self)
         self.visualizador = VisualizadorEspacio(self)
-
 
     def calcular_iluminacion_total(self, hora_dia: int) -> float:
         self.nivel_iluminacion = PropagacionLuz.calcular_iluminacion_espacio(self, hora_dia)
         return self.nivel_iluminacion
 
     def calcular_lumens(self) -> float:
-        return self.nivel_iluminacion * self.area  # Lux * Area
+        return self.nivel_iluminacion * self.area
 
     def es_habitable(self) -> bool:
         thresholds = {
@@ -247,21 +278,24 @@ class Building:
         self.espacios = []
 
     def add_espacio(self, espacio: Espacio):
+        # Verificar si el espacio está dentro de los límites del edificio
         if 0 <= espacio.x <= self.floor_width and 0 <= espacio.y <= self.floor_length and 0 <= espacio.z < self.floors:
+            # Si no tiene ventanas y no es un espacio sin acceso a luz natural, agregamos una ventana predeterminada
+            if not espacio.ventanas and not espacio.es_exterior:
+                print(f"[Aviso] {espacio.nombre} no tiene ventanas. Se agregará una por defecto.")
+                espacio.ventanas.append(Ventana(area=2, factor_transmision_luz=0.7, orientacion="sur"))
+
             self.espacios.append(espacio)
         else:
-            raise ValueError("Espacio coordinates are out of building bounds.")
+            raise ValueError("Las coordenadas del espacio están fuera de los límites del edificio.")
 
 
 class PropagacionLuz:
     @staticmethod
-    def calcular_iluminacion_punto(punto: Tuple[float, float, float],
-                                   fuentes_luz: List, superficies: List) -> float:
-        iluminacion_directa = sum(PropagacionLuz._calcular_iluminacion_directa(punto, fuente)
-                                  for fuente in fuentes_luz)
+    def calcular_iluminacion_punto(punto: Tuple[float, float, float], fuentes_luz: List, superficies: List) -> float:
+        iluminacion_directa = PropagacionLuz._calcular_iluminacion_directa_sin_posicion(fuentes_luz)
         iluminacion_indirecta = PropagacionLuz._calcular_iluminacion_indirecta(punto, superficies)
         return iluminacion_directa + iluminacion_indirecta
-
     @staticmethod
     def _calcular_iluminacion_directa(punto: Tuple[float, float, float],
                                       fuente) -> float:
@@ -269,22 +303,35 @@ class PropagacionLuz:
         return fuente.obtener_flujo_luminoso() / (4 * math.pi * distancia ** 2)
 
     @staticmethod
-    def _calcular_iluminacion_indirecta(punto: Tuple[float, float, float],
-                                        superficies: List) -> float:
+    def _calcular_iluminacion_indirecta(punto: Tuple[float, float, float], superficies: List) -> float:
         return 50  # Valor base simplificado
-
     @staticmethod
+   
     def calcular_iluminacion_espacio(espacio: Espacio, hora_dia: int) -> float:
+        # Calcular luz artificial solo si los dispositivos están encendidos
         iluminacion_artificial = sum(dispositivo.obtener_flujo_luminoso()
-                                     for dispositivo in espacio.dispositivos_iluminacion)
-        iluminacion_natural = sum(ventana.calcular_aporte_luz_natural(
-            CondicionesExternas(10000, hora_dia, "despejado"))  # Valores ejemplo
-            for ventana in espacio.ventanas)
+                                     for dispositivo in espacio.dispositivos_iluminacion
+                                     if dispositivo.estado)  # Solo dispositivos encendidos
 
+        # Calcular luz natural
+        condiciones_externas = CondicionesExternas(100000, hora_dia, "despejado")  # Valores de ejemplo
+        iluminacion_natural = sum(ventana.calcular_aporte_luz_natural(condiciones_externas)
+                                  for ventana in espacio.ventanas)
+
+        # Ajuste para exteriores
         if espacio.es_exterior:
-            iluminacion_natural *= 1.5  # Aumentar la luz natural en un 50% para exteriores
+            iluminacion_natural *= 1.5
 
-        return (iluminacion_artificial + iluminacion_natural) / espacio.area
+        # Evitar división por cero en el área
+        if espacio.area <= 0:
+            print(f"Advertencia: El área de {espacio.nombre} es cero o negativa.")
+            return 0.0
+
+        # Suma de iluminación total dividida por el área del espacio
+        iluminacion_total = (iluminacion_artificial + iluminacion_natural) / espacio.area
+
+        # Asegurar que siempre haya un mínimo de luz
+        return max(iluminacion_total, 0.1)
 
 
 class AnalizadorConfortVisual:
@@ -303,15 +350,20 @@ class AnalizadorConfortVisual:
 
 class SistemaIluminacion:
     def __init__(self, building: Building):
-        self.building = building  # Reference to the building
-        self.dispositivos_iluminacion = []
-        self.sensores_luz = []
+        self.building = building  # Renombramos de "edificio" a "building" para evitar errores
 
+
+    def actualizar_iluminacion(self, iluminancia_exterior: float, hora_dia: int, clima: str):
+        condiciones = CondicionesExternas(iluminancia_exterior, hora_dia, clima)
+        for espacio in self.building.espacios:
+            luz_natural_total = sum(ventana.calcular_aporte_luz_natural(condiciones) for ventana in espacio.ventanas)
+            espacio.nivel_iluminacion = luz_natural_total
+            print(f"[Actualización] {espacio.nombre} -> Luz Natural: {luz_natural_total:.2f} lux")
     @property
     def espacios(self):
-        return self.building.espacios  # Get spaces directly from the building
-
+        return self.building.espacios  # Ahora es una propiedad, no un método
     def analizar_iluminacion_global(self, hora_dia: int) -> Dict:
+        
         if not self.espacios:
             print("No hay espacios en el edificio.")
             return {}
@@ -449,15 +501,14 @@ class Recomendaciones:
         ])
 
 class InterfazGrafica:
-    def __init__(self, sistema: 'SistemaIluminacion'):
+    def __init__(self, sistema):
         self.sistema = sistema
-        self.recomendaciones = Recomendaciones()
+        self.simulador = SimuladorCondicionesExternas(self.sistema)
+         # Definir las variables aquí para que se mantengan actualizadas
         self.root = tk.Tk()
-        self.estilizar_interfaz()
         self.root.title("Sistema de Habitabilidad")
-        self.root.geometry("1920x1080")
-        self.root.configure(bg="#f0f0f0")
-
+        self.root.geometry("1280x720")
+        self.configurar_interfaz()
         # Crear un sistema de pestañas
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True)
@@ -469,6 +520,7 @@ class InterfazGrafica:
         self.optimizacion_tab = ttk.Frame(self.notebook)
 
         self.notebook.add(self.simulacion_tab, text="Simulación")
+        
         self.notebook.add(self.configuracion_tab, text="Configuración")
         self.notebook.add(self.analisis_tab, text="Análisis")
         self.notebook.add(self.optimizacion_tab, text="Optimización")
@@ -478,8 +530,21 @@ class InterfazGrafica:
         self.configurar_configuracion_tab()
         self.configurar_analisis_tab()
         self.configurar_optimizacion_tab()
+        self.recomendaciones = Recomendaciones()
+    def configurar_interfaz(self):
+        self.frame_simulacion = ttk.Frame(self.root, padding="10")
+        self.frame_simulacion.pack(fill=tk.BOTH, expand=True)
 
-        self.root.mainloop()
+        ttk.Label(self.frame_simulacion, text="Hora del día:").pack()
+        self.hora_var = tk.IntVar()  # Sin valor predeterminado
+        ttk.Spinbox(self.frame_simulacion, from_=0, to=23, textvariable=self.hora_var).pack()
+
+        ttk.Label(self.frame_simulacion, text="Clima:").pack()
+        self.clima_var = tk.StringVar()  # Sin valor predeterminado
+        ttk.Combobox(self.frame_simulacion, values=["despejado", "nublado", "lluvioso"], textvariable=self.clima_var).pack()
+
+        ttk.Button(self.frame_simulacion, text="Actualizar Simulación", command=self.actualizar_simulacion).pack()
+
 
     def estilizar_interfaz(self):
         style = ttk.Style()
@@ -500,21 +565,27 @@ class InterfazGrafica:
         self.canvas_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self.control_frame = ttk.Frame(self.simulacion_frame)
-        self.control_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
+        self.control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
 
         self.panel_simulacion = ttk.Frame(self.control_frame)
         self.panel_simulacion.pack(pady=10)
-
-        ttk.Label(self.panel_simulacion, text="Hora del día:").grid(row=0, column=0, pady=5)
-        self.hora_var = tk.StringVar(value="12")
-        ttk.Spinbox(self.panel_simulacion, from_=0, to=23, textvariable=self.hora_var).grid(row=0, column=1, pady=5)
-
-        ttk.Label(self.panel_simulacion, text="Clima:").grid(row=1, column=0, pady=5)
-        self.clima_var = tk.StringVar(value="despejado")
-        ttk.Combobox(self.panel_simulacion, values=["despejado", "nublado"], textvariable=self.clima_var).grid(row=1, column=1, pady=5)
-
         self.crear_botones()
+        ttk.Label(self.panel_simulacion, text="Hora del día:").grid(row=0, column=0, pady=5)
+        # Ahora reutilizamos self.hora_var, no la volvemos a definir
+        self.hora_spinbox = ttk.Spinbox(self.panel_simulacion, from_=0, to=23, textvariable=self.hora_var)
+        self.hora_spinbox.grid(row=0, column=1, pady=5)
+        
+        ttk.Label(self.panel_simulacion, text="Clima:").grid(row=1, column=0, pady=5)
+        # Reutilizamos self.clima_var
+        self.clima_combobox = ttk.Combobox(self.panel_simulacion, values=["despejado", "nublado", "lluvioso"], textvariable=self.clima_var)
+        self.clima_combobox.grid(row=1, column=1, pady=5)
 
+        # Botón para actualizar manualmente
+        self.actualizar_btn = ttk.Button(self.panel_simulacion, text="Actualizar Simulación", command=self.actualizar_simulacion)
+        self.actualizar_btn.grid(row=2, columnspan=2, pady=10)
+        
+        # Añadimos botones para aplicar algoritmos de coloración
+        
     def crear_botones(self):
         ttk.Button(self.control_frame, text="Coloración Greedy", command=self.aplicar_coloracion_greedy).pack(pady=5)
         ttk.Button(self.control_frame, text="Coloración Robusta", command=self.aplicar_coloracion_robusta).pack(pady=5)
@@ -522,6 +593,15 @@ class InterfazGrafica:
         ttk.Button(self.control_frame, text="Vista 2D", command=self.mostrar_vista_2d).pack(pady=5)
         ttk.Button(self.control_frame, text="Control de Dispositivos", command=self.mostrar_control_dispositivos).pack(pady=5)
         ttk.Button(self.control_frame, text="Info Algoritmos", command=self.mostrar_informacion_algoritmos).pack(pady=5)
+    def actualizar_simulacion(self):
+         # Aquí aseguramos que estamos pasando los valores correctos
+        nueva_hora = self.hora_var.get()
+        nuevo_clima = self.clima_var.get()
+        print(f"Actualizando a hora: {nueva_hora}, clima: {nuevo_clima}")
+        
+        # Llamamos a la función de actualización en el simulador con los valores capturados
+        self.simulador.actualizar_condiciones(nueva_hora, nuevo_clima)
+    
 
     def aplicar_coloracion_greedy(self):
         if not self.sistema.espacios:
@@ -686,14 +766,7 @@ class InterfazGrafica:
         self.optimizacion_frame.pack(fill=tk.BOTH, expand=True)
         ttk.Button(self.optimizacion_frame, text="Optimizar Consumo", command=self.mostrar_optimizacion).pack(pady=5)
         
-    def crear_botones(self):
-        # Botones de control en la pestaña de simulación
-        ttk.Button(self.control_frame, text="Coloración Greedy", command=self.aplicar_coloracion_greedy).pack(pady=5)
-        ttk.Button(self.control_frame, text="Coloración Robusta", command=self.aplicar_coloracion_robusta).pack(pady=5)
-        ttk.Button(self.control_frame, text="Vista 3D", command=self.mostrar_vista_3d).pack(pady=5)
-        ttk.Button(self.control_frame, text="Vista 2D", command=self.mostrar_vista_2d).pack(pady=5)
-        ttk.Button(self.control_frame, text="Control de Dispositivos", command=self.mostrar_control_dispositivos).pack(pady=5)
-
+    
     def aplicar_coloracion_greedy(self):
         if not self.sistema.espacios:
             messagebox.showwarning("Advertencia", "No hay espacios para colorear")
@@ -969,23 +1042,24 @@ class InterfazGrafica:
                    command=guardar_dispositivo).grid(row=row + 1, column=0, columnspan=2, pady=10)
 
     def mostrar_analisis(self):
-    if not self.sistema.espacios:
-        messagebox.showwarning("Advertencia", "No hay espacios para analizar")
-        return
+        if not self.sistema.espacios:
+            messagebox.showwarning("Advertencia", "No hay espacios para analizar")
+            return
 
-    hora_dia = int(self.hora_var.get())
-    clima = self.clima_var.get()
-    resultados = self.sistema.analizar_iluminacion_global(hora_dia)
+        hora_dia = int(self.hora_var.get())
+        clima = self.clima_var.get()
+        resultados = self.sistema.analizar_iluminacion_global(hora_dia)
 
-    ventana = tk.Toplevel(self.root)
-    ventana.title("Análisis de Iluminación")
+        ventana = tk.Toplevel(self.root)
+        ventana.title("Análisis de Iluminación")
 
-    texto = tk.Text(ventana, wrap=tk.WORD, width=60, height=20)
-    texto.pack(padx=10, pady=10)
+        texto = tk.Text(ventana, wrap=tk.WORD, width=60, height=20)
+        texto.pack(padx=10, pady=10)
 
-    for espacio in self.sistema.espacios:
-        es_habitable = resultados[espacio.nombre]['habitable']
-        recomendacion = self.recomendaciones.obtener_recomendacion(
+        for espacio in self.sistema.espacios:
+            es_habitable = resultados[espacio.nombre]['habitable']
+            clima = self.clima_var.get()  # Obtener el clima seleccionado en la interfaz
+            recomendacion = self.recomendaciones.obtener_recomendacion(
             espacio.actividad_principal, 
             espacio.es_exterior, 
             clima,
@@ -1032,39 +1106,84 @@ class InterfazGrafica:
 class SimuladorCondicionesExternas:
     def __init__(self, sistema):
         self.sistema = sistema
-        self.hora_dia = 8  # Comienza a las 8 AM
-        self.clima = "despejado"
-        self.iluminancia_exterior = 10000  # en lux
+        self.hora_dia = 0  # Comienza a las 8 AM
+        self.clima = "nublado"
+        self.iluminancia_exterior = self.calcular_iluminancia()
         self.running = True
 
+    def actualizar_condiciones(self, nueva_hora, nuevo_clima):
+        """ Actualiza las condiciones en la simulación con los nuevos valores de hora y clima. """
+        self.hora_dia = nueva_hora
+        self.clima = nuevo_clima
+        print(f"[Actualización manual] Hora: {self.hora_dia}, Clima: {self.clima}")
+        
+        # Calcular la nueva iluminancia y actualizar el sistema
+        self.iluminancia_exterior = self.calcular_iluminancia()
+        self.sistema.actualizar_iluminacion(self.iluminancia_exterior, self.hora_dia, self.clima)
+
+      
+
+    def calcular_iluminancia(self) -> float:
+        """ Ajusta la iluminancia exterior basada en la hora del día y el clima. """
+        iluminancia_maxima = 100000  # Lux máximo a mediodía despejado
+        iluminancia_minima = 10      # Lux mínimo en la noche
+
+        if 6 <= self.hora_dia <= 18:  # Día (6 AM a 6 PM)
+            factor_hora = math.sin(math.pi * (self.hora_dia - 6) / 12)  # 0 a 1
+            iluminancia_base = iluminancia_minima + (iluminancia_maxima - iluminancia_minima) * factor_hora
+        else:  # Noche
+            iluminancia_base = iluminancia_minima
+
+        factores_climaticos = {
+            "despejado": 1.0,
+            "parcialmente nublado": 0.6,
+            "nublado": 0.3,
+            "lluvioso": 0.1
+        }
+        factor_clima = factores_climaticos.get(self.clima.lower(), 1.0)
+
+        return max(iluminancia_base * factor_clima, 0)
+
     def simular(self):
+        """ Simula la variación de iluminación cada minuto automáticamente. """
         while self.running:
-            self.hora_dia = (self.hora_dia + 1) % 24
-            if self.hora_dia < 6 or self.hora_dia > 18:
-                self.iluminancia_exterior = 0  # Noche
-            else:
-                self.iluminancia_exterior = 10000  # Día
-            time.sleep(60)  # Simula un minuto cada segundo
+            self.hora_dia = (self.hora_dia + 1) % 24  # Avanza la hora automáticamente
+            self.iluminancia_exterior = self.calcular_iluminancia()
+            print(f"[Simulación] Hora: {self.hora_dia}:00, Clima: {self.clima}, Iluminancia exterior: {self.iluminancia_exterior:.2f} lux")
+
+            # Notificar al sistema de iluminación
+            self.sistema.actualizar_iluminacion(self.iluminancia_exterior, self.hora_dia, self.clima)
+
+            time.sleep(5)  # Simula 1 hora cada 5 segundos (para pruebas rápidas)
 
     def iniciar_simulacion(self):
-        threading.Thread(target=self.simular, daemon=True).start()
-
+        hilo = threading.Thread(target=self.simular, daemon=True)
+        hilo.start()
 
 # Inicialización del sistema y la interfaz gráfica
 building = Building("Edificio Central", floors=3, floor_width=20, floor_length=20)
 
-building.add_espacio(Espacio("Sala Reuniones", area=25, capacidad_ocupacion=5, 
-                             actividad_principal="Reuniones", duracion_actividad=2, x=5, y=5, z=0))
+sala_reuniones = Espacio("Sala Reuniones", area=25, capacidad_ocupacion=5, 
+                         actividad_principal="Reuniones", duracion_actividad=2, x=5, y=5, z=0)
 
-building.add_espacio(Espacio("Biblioteca", area=30, capacidad_ocupacion=8, 
-                             actividad_principal="Estudio", duracion_actividad=4, x=10, y=15, z=1))
+sala_reuniones.ventanas.append(Ventana(area=2, factor_transmision_luz=0.7, orientacion="sur"))
 
-building.add_espacio(Espacio("Dormitorio", area=20, capacidad_ocupacion=2, 
-                             actividad_principal="Descanso", duracion_actividad=8, x=7, y=3, z=2))
+building.add_espacio(sala_reuniones)
+
+biblioteca = Espacio("Biblioteca", area=30, capacidad_ocupacion=8, 
+                     actividad_principal="Estudio", duracion_actividad=4, x=10, y=15, z=1)
+
+biblioteca.ventanas.append(Ventana(area=3, factor_transmision_luz=0.75, orientacion="este"))
+
+dormitorio = Espacio("Dormitorio", area=20, capacidad_ocupacion=2, 
+                     actividad_principal="Descanso", duracion_actividad=8, x=7, y=3, z=2)
+
+dormitorio.ventanas.append(Ventana(area=2, factor_transmision_luz=0.6, orientacion="oeste"))
+
+building.add_espacio(biblioteca)
+building.add_espacio(dormitorio)
 
 sistema = SistemaIluminacion(building)
-
-simulador = SimuladorCondicionesExternas(sistema)
-simulador.iniciar_simulacion()
 interfaz = InterfazGrafica(sistema)
 interfaz.root.mainloop()
+
