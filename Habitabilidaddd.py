@@ -7,6 +7,13 @@ import math
 import threading
 import time
 from typing import Dict, List, Tuple, Set
+import tkinter as tk
+from tkinter import ttk
+import networkx as nx
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from tkinter import Button
+from matplotlib.figure import Figure
 
 
 class CondicionesExternas:
@@ -210,8 +217,8 @@ class Espacio:
         self.actividad_principal = actividad_principal
         self.duracion_actividad = duracion_actividad
         self.x = x  
-        self.y = y  
-        self.z = z  
+        self.y = y  # Vertical position
+        self.z = z  # Floor number
         self.es_exterior = es_exterior
         self.ventanas = []
         self.dispositivos_iluminacion = []
@@ -220,6 +227,7 @@ class Espacio:
         self.superficies = []
         self.coloracion = ColoracionEspacio(self)
         self.visualizador = VisualizadorEspacio(self)
+        self.offset_pct = 0
 
 
     def calcular_iluminacion_total(self, hora_dia: int) -> float:
@@ -235,7 +243,10 @@ class Espacio:
             "Estudio": 400,
             "Descanso": 200,
         }
-        return self.nivel_iluminacion >= thresholds.get(self.actividad_principal, 0)
+        if(self.actividad_principal.__eq__("Descanso")):
+            return self.nivel_iluminacion <= thresholds.get(self.actividad_principal, 0)
+        else:
+            return self.nivel_iluminacion >= thresholds.get(self.actividad_principal, 0)
 
 
 class Building:
@@ -366,13 +377,7 @@ class Recomendaciones:
                         "Aumenta la iluminación en áreas exteriores para mantener la visibilidad.",
                         "Usa luces de colores cálidos para crear un ambiente acogedor."
                     ]
-                },
-                "no_habitable": [
-                    "Instalar iluminación adicional para alcanzar los 300 lux mínimos requeridos.",
-                    "Considerar la instalación de ventanas o tragaluces para aumentar la luz natural.",
-                    "Revisar y optimizar la distribución de las luminarias existentes.",
-                    "Evaluar el uso de superficies reflectantes para mejorar la distribución de luz."
-                ]
+                }
             },
             "Estudio": {
                 "interior": {
@@ -394,13 +399,7 @@ class Recomendaciones:
                         "Aumenta la iluminación en áreas exteriores para mantener la visibilidad.",
                         "Usa luces de colores cálidos para crear un ambiente acogedor."
                     ]
-                },
-                "no_habitable": [
-                    "Instalar iluminación adicional para alcanzar los 400 lux mínimos requeridos.",
-                    "Evaluar la posibilidad de añadir luz natural mediante ventanas o tragaluces.",
-                    "Considerar el uso de luminarias específicas para tareas de estudio.",
-                    "Revisar la disposición del mobiliario para optimizar el aprovechamiento de la luz."
-                ]
+                }
             },
             "Descanso": {
                 "interior": {
@@ -422,649 +421,184 @@ class Recomendaciones:
                         "Asegúrate de que las áreas exteriores estén bien iluminadas.",
                         "Usa luces suaves para crear un ambiente acogedor."
                     ]
-                },
-                "no_habitable": [
-                    "Instalar iluminación adicional para alcanzar los 200 lux mínimos requeridos.",
-                    "Considerar el uso de reguladores de intensidad para ajustar la iluminación.",
-                    "Evaluar la instalación de luces indirectas para crear ambientes más relajantes.",
-                    "Revisar la temperatura de color de las luminarias existentes."
-                ]
+                }
             }
         }
 
-    def obtener_recomendacion(self, actividad_principal: str, es_exterior: bool, clima: str, es_habitable: bool = True) -> List[str]:
-        if not es_habitable:
-            return self.recomendaciones.get(actividad_principal, {}).get("no_habitable", [
-                "Este espacio no cumple con los requisitos mínimos de iluminación para la actividad actual.",
-                "Se recomienda:",
-                "- Aumentar los niveles de iluminación",
-                "- Considerar cambiar la actividad del espacio",
-                "- Consultar con un especialista en iluminación"
-            ])
-        
+    def obtener_recomendacion(self, actividad_principal: str, es_exterior: bool, clima: str) -> List[str]:
         tipo_ubicacion = "exterior" if es_exterior else "interior"
-        return self.recomendaciones.get(actividad_principal, {}).get(tipo_ubicacion, {}).get(clima, [
-            "No hay recomendaciones específicas disponibles para esta combinación de actividad, ubicación y clima.",
-            "Por favor, consulte las guías generales de iluminación."
-        ])
+        return self.recomendaciones.get(actividad_principal, {}).get(tipo_ubicacion, {}).get(clima, ["No hay recomendaciones disponibles."])
+    
+class AdjacencyChecker:
+    def __init__(self, spaces, threshold=5):
+        self.spaces = spaces
+        self.threshold = threshold
+        self.adjacency_matrix_3d = self.build_adjacency_matrix_3d()
+        self.adjacency_matrix_2d = self.build_adjacency_matrix_2d()
 
+    def is_adjacent_3d(self, espacio1, espacio2):
+        distance = np.linalg.norm([espacio1.x - espacio2.x, espacio1.y - espacio2.y, espacio1.z - espacio2.z])
+        return distance <= self.threshold
+
+    def is_adjacent_2d(self, espacio1, espacio2):
+        if espacio1.z != espacio2.z:
+            return False
+        distance = np.linalg.norm([espacio1.x - espacio2.x, espacio1.y - espacio2.y])
+        return distance <= self.threshold
+
+    def build_adjacency_matrix_3d(self):
+        n = len(self.spaces)
+        matrix = np.zeros((n, n), dtype=int)
+        for i in range(n):
+            for j in range(i + 1, n):
+                if self.is_adjacent_3d(self.spaces[i], self.spaces[j]):
+                    matrix[i][j] = 1
+                    matrix[j][i] = 1
+        return matrix
+
+    def build_adjacency_matrix_2d(self):
+        n = len(self.spaces)
+        matrix = np.zeros((n, n), dtype=int)
+        for i in range(n):
+            for j in range(i + 1, n):
+                if self.is_adjacent_2d(self.spaces[i], self.spaces[j]):
+                    matrix[i][j] = 1
+                    matrix[j][i] = 1
+        return matrix
+    
 class InterfazGrafica:
-    def __init__(self, sistema: 'SistemaIluminacion'):
-        self.sistema = sistema
-        self.recomendaciones = Recomendaciones()
+    def __init__(self, building):
         self.root = tk.Tk()
-        self.estilizar_interfaz()
-        self.root.title("Sistema de Habitabilidad")
-        self.root.geometry("1920x1080")
-        self.root.configure(bg="#f0f0f0")
+        self.root.title("Building Adjacency Visualization")
+        self.building = building
+        self.adjacency_checker = AdjacencyChecker(building.espacios)
 
-        # Crear un sistema de pestañas
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
+        # Initialize figure before using it
+        self.fig, self.axs = plt.subplots(1, 2, figsize=(12, 6))
+        self.axs[1] = self.fig.add_subplot(122, projection='3d')
 
-        # Pestañas
-        self.simulacion_tab = ttk.Frame(self.notebook)
-        self.configuracion_tab = ttk.Frame(self.notebook)
-        self.analisis_tab = ttk.Frame(self.notebook)
-        self.optimizacion_tab = ttk.Frame(self.notebook)
+        # Now it's safe to create the canvas
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas.get_tk_widget().pack()
 
-        self.notebook.add(self.simulacion_tab, text="Simulación")
-        self.notebook.add(self.configuracion_tab, text="Configuración")
-        self.notebook.add(self.analisis_tab, text="Análisis")
-        self.notebook.add(self.optimizacion_tab, text="Optimización")
+        self.btn_plot = Button(self.root, text="Plot Graph", command=self.plot_graph)
+        self.btn_plot.pack()
 
-        # Configurar pestañas
-        self.configurar_simulacion_tab()
-        self.configurar_configuracion_tab()
-        self.configurar_analisis_tab()
-        self.configurar_optimizacion_tab()
+    def plot_graph(self):
+        self.axs[0].cla()
+        self.axs[1].cla()
+        self.plot_colored_graph()
+        self.plot_3d_graph()
+        self.canvas.draw()  # Ensure canvas updates
+    
+    def greedy_coloring(self):
+        n = len(self.building.espacios)
+        colors = [-1] * n  
+        
+        for i in range(n):
+            adjacent_colors = set()
+            for j in range(n):
+                if self.adjacency_checker.adjacency_matrix_2d[i][j] == 1 and colors[j] != -1:
+                    adjacent_colors.add(colors[j])
 
-        self.root.mainloop()
+        
+            color = 0
+            while color in adjacent_colors:
+                color += 1
+            self.building.espacios[i].calcular_iluminacion_total(12)
+            if self.building.espacios[i].es_habitable():
+                
+                colors[i] = 'g'  
+            else:
+                offset_pct = (self.building.espacios[i].nivel_iluminacion / self.get_threshold(self.building.espacios[i].actividad_principal)) * 100
+                if abs(offset_pct - 100) < 10:
+                    colors[i] = 'y'  
+                else:
+                    
+                    colors[i] = 'r' 
 
-    def estilizar_interfaz(self):
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TButton", padding=6, relief="flat", background="#4CAF50", foreground="white", font=("Helvetica", 12))
-        style.map("TButton", background=[("active", "#45a049")])
-        style.configure("TLabel", background="#f0f0f0", font=("Helvetica", 12))
-        style.configure("TNotebook", background="#f0f0f0", font=("Helvetica", 12))
-        style.configure("TNotebook.Tab", padding=[10, 5], font=("Helvetica", 12))
+        return colors
 
-    def configurar_simulacion_tab(self):
-        self.simulacion_frame = ttk.Frame(self.simulacion_tab, padding="10")
-        self.simulacion_frame.pack(fill=tk.BOTH, expand=True)
+    def get_threshold(self, actividad):
+        thresholds = {
+            "Reuniones": 300,
+            "Estudio": 400,
+            "Descanso": 200,
+        }
+        return thresholds.get(actividad, 0)
 
-        self.fig = plt.figure(figsize=(8, 6))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.simulacion_frame)
-        self.canvas_widget = self.canvas.get_tk_widget()
-        self.canvas_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        self.control_frame = ttk.Frame(self.simulacion_frame)
-        self.control_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
-
-        self.panel_simulacion = ttk.Frame(self.control_frame)
-        self.panel_simulacion.pack(pady=10)
-
-        ttk.Label(self.panel_simulacion, text="Hora del día:").grid(row=0, column=0, pady=5)
-        self.hora_var = tk.StringVar(value="12")
-        ttk.Spinbox(self.panel_simulacion, from_=0, to=23, textvariable=self.hora_var).grid(row=0, column=1, pady=5)
-
-        ttk.Label(self.panel_simulacion, text="Clima:").grid(row=1, column=0, pady=5)
-        self.clima_var = tk.StringVar(value="despejado")
-        ttk.Combobox(self.panel_simulacion, values=["despejado", "nublado"], textvariable=self.clima_var).grid(row=1, column=1, pady=5)
-
-        self.crear_botones()
-
-    def crear_botones(self):
-        ttk.Button(self.control_frame, text="Coloración Greedy", command=self.aplicar_coloracion_greedy).pack(pady=5)
-        ttk.Button(self.control_frame, text="Coloración Robusta", command=self.aplicar_coloracion_robusta).pack(pady=5)
-        ttk.Button(self.control_frame, text="Vista 3D", command=self.mostrar_vista_3d).pack(pady=5)
-        ttk.Button(self.control_frame, text="Vista 2D", command=self.mostrar_vista_2d).pack(pady=5)
-        ttk.Button(self.control_frame, text="Control de Dispositivos", command=self.mostrar_control_dispositivos).pack(pady=5)
-        ttk.Button(self.control_frame, text="Info Algoritmos", command=self.mostrar_informacion_algoritmos).pack(pady=5)
-
-    def aplicar_coloracion_greedy(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para colorear")
-            return
-
-        espacio_actual = self.sistema.espacios[0]
-        espacio_actual.coloracion.construir_grafo_adyacencia()
-        coloracion = espacio_actual.coloracion.coloracion_greedy()
-        self.visualizar_coloracion(coloracion, "Coloración Greedy")
-
-    def aplicar_coloracion_robusta(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para colorear")
-            return
-
-        espacio_actual = self.sistema.espacios[0]
-        espacio_actual.coloracion.construir_grafo_adyacencia()
-        coloracion = espacio_actual.coloracion.coloracion_robusta(5)
-        self.visualizar_coloracion(coloracion, "Coloración Robusta")
-
-    def visualizar_coloracion(self, coloracion: Dict[int, int], tipo: str):
-        ventana_resultados = tk.Toplevel(self.root)
-        ventana_resultados.title(f"Resultados de {tipo}")
-
-        texto = tk.Text(ventana_resultados, wrap=tk.WORD, width=60, height=20)
-        texto.pack(padx=10, pady=10)
-
-        for nodo, color in coloracion.items():
-            texto.insert(tk.END, f"Zona {nodo}: Color {color}\n")
-
-        self.fig.clear()
-        ax = self.fig.add_subplot(111)
-        zonas = self.sistema.espacios[0].coloracion._dividir_espacio_en_zonas()
-
-        for nodo, color in coloracion.items():
-            zona = zonas[nodo]
-            x, y = zona['centro']
-
-        # Ensure color is an integer and within the valid range for tab20
-        if isinstance(color, int):
-            color_index = max(0, min(19, color))  # Clamp to the range [0, 19]
-        else:
-            print(f"Invalid color value for node {nodo}: {color}. Defaulting to 0.")
-            color_index = 0  # Default to a valid color index
-
-        ax.scatter(x, y, c=[plt.cm.tab20(color_index)], s=100)
-
-        ax.set_title(f"Simulación de {tipo}")
+    def plot_2d_graph(self):
+        ax = self.axs[0]
+        ax.set_title("2D Adjacency (Per Floor)")
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
-        self.canvas.draw()
 
-    def mostrar_informacion_algoritmos(self):
-        ventana_info = tk.Toplevel(self.root)
-        ventana_info.title("Información de Algoritmos de Coloración")
-
-        texto = tk.Text(ventana_info, wrap=tk.WORD, width=60, height=20)
-        texto.pack(padx=10, pady=10)
-
-        texto.insert(tk.END, "Coloración Greedy:\n")
-        texto.insert(tk.END, "Este algoritmo asigna colores a las zonas de manera que no haya dos zonas adyacentes con el mismo color. Es rápido y eficiente, pero no siempre encuentra la solución óptima.\n\n")
-        texto.insert(tk.END, "Coloración Robusta:\n")
-        texto.insert(tk.END, "Este algoritmo extiende la coloración greedy para asegurar que cada zona tenga un conjunto de colores disponibles, aumentando la robustez del sistema ante cambios o fallos. Es más complejo y puede ser más lento, pero ofrece una mayor flexibilidad.\n\n")
-
-        ttk.Button(ventana_info, text="Cerrar", command=ventana_info.destroy).pack(pady=10)
-
-    def mostrar_vista_3d(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para visualizar")
-            return
-
-        ventana_3d = tk.Toplevel(self.root)
-        ventana_3d.title("Vista 3D del Edificio")
-
-        fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(111, projection='3d')
-
-        for espacio in self.sistema.espacios:
-            color = 'green' if espacio.es_habitable() else 'red'
-            ax.scatter(espacio.x, espacio.y, espacio.z, c=color, s=100)
-            ax.text(espacio.x, espacio.y, espacio.z + 0.1, f"{espacio.nombre}", color='black', fontsize=8)
-
-        ax.set_xlim(0, self.sistema.floor_width)
-        ax.set_ylim(0, self.sistema.floor_length)
-        ax.set_zlim(0, self.sistema.floors)
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Floor (Z)')
-        ax.set_title('Vista 3D del Edificio')
-
-        canvas = FigureCanvasTkAgg(fig, master=ventana_3d)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-
-    def mostrar_vista_2d(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para visualizar")
-            return
-
-        plt.figure(figsize=(10, 8))
-        for espacio in self.sistema.espacios:
-            length = width = np.sqrt(espacio.area)
-            color = 'green' if espacio.es_habitable() else 'red'
-            plt.gca().add_patch(plt.Rectangle((0, 0), length, width, color=color, alpha=0.5))
-            plt.text(length / 2, width / 2, espacio.nombre, horizontalalignment='center', verticalalignment='center')
-
-        plt.xlim(0, max(np.sqrt(e.area) for e in self.sistema.espacios))
-        plt.ylim(0, max(np.sqrt(e.area) for e in self.sistema.espacios))
-        plt.title('Vista 2D de Todos los Espacios')
-        plt.xlabel('Longitud (m)')
-        plt.ylabel('Anchura (m)')
-        plt.grid()
-        plt.show()
-
-    def mostrar_control_dispositivos(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para controlar dispositivos")
-            return
-
-        dialogo = tk.Toplevel(self.root)
-        dialogo.title("Control de Dispositivos de Iluminación")
-
-        dispositivo_var = tk.StringVar()
-        dispositivo_combo = ttk.Combobox(dialogo, textvariable=dispositivo_var)
-        dispositivo_combo['values'] = [f"{dispositivo.tipo} (Estado: {'Encendido' if dispositivo.estado else 'Apagado'})"
-                                       for espacio in self.sistema.espacios
-                                       for dispositivo in espacio.dispositivos_iluminacion]
-        dispositivo_combo.grid(row=0, column=0, pady=3)
-
-        ttk.Button(dialogo, text="Encender", command=lambda: self.control_dispositivo(dispositivo_var.get(), True)).grid(row=1, column=0, pady=5)
-        ttk.Button(dialogo, text="Apagar", command=lambda: self.control_dispositivo(dispositivo_var.get(), False)).grid(row=2, column=0, pady=5)
-
-    def control_dispositivo(self, dispositivo_info: str, encender: bool):
-        tipo_dispositivo = dispositivo_info.split(" (")[0]
-        for espacio in self.sistema.espacios:
-            for dispositivo in espacio.dispositivos_iluminacion:
-                if dispositivo.tipo == tipo_dispositivo:
-                    if encender:
-                        dispositivo.encender()
-                    else:
-                        dispositivo.apagar()
-                    messagebox.showinfo("Control de Dispositivo", f"{tipo_dispositivo} ha sido {'encendido' if encender else 'apagado'}.")
-                    return
-        messagebox.showwarning("Advertencia", "Dispositivo no encontrado.")
-
-    def configurar_configuracion_tab(self):
-        self.configuracion_frame = ttk.Frame(self.configuracion_tab, padding="10")
-        self.configuracion_frame.pack(fill=tk.BOTH, expand=True)
-
-        ttk.Button(self.configuracion_frame, text="Agregar Espacio", command=self.mostrar_dialogo_espacio).pack(pady=5)
-        ttk.Button(self.configuracion_frame, text="Agregar Dispositivo", command=self.mostrar_dialogo_dispositivo).pack(pady=5)
-
-    def configurar_analisis_tab(self):
-        self.analisis_frame = ttk.Frame(self.analisis_tab, padding="10")
-        self.analisis_frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Button(self.analisis_frame, text="Analizar Iluminación", command=self.mostrar_analisis).pack(pady=5)
-
-    def configurar_optimizacion_tab(self):
-        self.optimizacion_frame = ttk.Frame(self.optimizacion_tab, padding="10")
-        self.optimizacion_frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Button(self.optimizacion_frame, text="Optimizar Consumo", command=self.mostrar_optimizacion).pack(pady=5)
-        
-    def crear_botones(self):
-        # Botones de control en la pestaña de simulación
-        ttk.Button(self.control_frame, text="Coloración Greedy", command=self.aplicar_coloracion_greedy).pack(pady=5)
-        ttk.Button(self.control_frame, text="Coloración Robusta", command=self.aplicar_coloracion_robusta).pack(pady=5)
-        ttk.Button(self.control_frame, text="Vista 3D", command=self.mostrar_vista_3d).pack(pady=5)
-        ttk.Button(self.control_frame, text="Vista 2D", command=self.mostrar_vista_2d).pack(pady=5)
-        ttk.Button(self.control_frame, text="Control de Dispositivos", command=self.mostrar_control_dispositivos).pack(pady=5)
-
-    def aplicar_coloracion_greedy(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para colorear")
-            return
-
-        espacio_actual = self.sistema.espacios[0]
-        espacio_actual.coloracion.construir_grafo_adyacencia()
-        coloracion = espacio_actual.coloracion.coloracion_greedy()
-
-        # Visualizar la simulación
-        self.visualizar_coloracion(coloracion, "Coloración Greedy")
-
-    def aplicar_coloracion_robusta(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para colorear")
-            return
-
-        espacio_actual = self.sistema.espacios[0]
-        espacio_actual.coloracion.construir_grafo_adyacencia()
-        coloracion = espacio_actual.coloracion.coloracion_robusta(5)
-
-        # Visualizar la simulación
-        self.visualizar_coloracion(coloracion, "Coloración Robusta")
-
-    def visualizar_coloracion(self, coloracion: Dict[int, Set[int]], tipo: str):
-            ventana_resultados = tk.Toplevel(self.root)
-            ventana_resultados.title(f"Resultados de {tipo}")
-
-            texto = tk.Text(ventana_resultados, wrap=tk.WORD, width=60, height=20)
-            texto.pack(padx=10, pady=10)
-
-            for nodo, colores in coloracion.items():
-                texto.insert(tk.END, f"Zona {nodo}: Colores {colores}\n")
-
-            self.fig.clear()
-            ax = self.fig.add_subplot(111)
-            zonas = self.sistema.espacios[0].coloracion._dividir_espacio_en_zonas()
-
-            for nodo, colores in coloracion.items():
-                zona = zonas[nodo]
-                x, y = zona['centro']
-
-        # Choose the first color from the set (or implement your own logic)
-                color_index = next(iter(colores)) if colores else 0  # Default to 0 if no colors available
-
-        # Ensure color is within the valid range for tab20
-                color_index = max(0, min(19, color_index))  # Clamp to the range [0, 19]
-
-                ax.scatter(x, y, c=[plt.cm.tab20(color_index)], s=100)
-
-                ax.set_title(f"Simulación de {tipo}")
-                ax.set_xlabel("X")
-                ax.set_ylabel("Y")
-                self.canvas.draw()
-
-    def mostrar_vista_3d(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para visualizar")
-            return
-
-        ventana_3d = tk.Toplevel(self.root)
-        ventana_3d.title("Vista 3D de Todos los Espacios")
-
-        fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(111, projection='3d')
-
-        # Plot each Espacio as a single point
-        for espacio in self.sistema.espacios:
-            x, y, z = espacio.x, espacio.y, espacio.z  # Correct reference
-            color = 'green' if espacio.es_habitable() else 'red'
-            ax.scatter(x, y, z, c=color, s=50)
-            ax.text(x, y, z + 0.2, espacio.nombre, color='black', fontsize=8)
-
-        # Determine the limits dynamically
-        max_x = max(e.x for e in self.sistema.espacios) + 1
-        max_y = max(e.y for e in self.sistema.espacios) + 1
-        max_z = max(e.z for e in self.sistema.espacios) + 1
-
-        # Set axis limits
-        ax.set_xlim(0, max_x)
-        ax.set_ylim(0, max_y)
-        ax.set_zlim(0, max_z)
-
-        # Set axis labels
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-
-        # **Set grid spacing to 1 unit**
-        ax.set_xticks(np.arange(0, max_x + 1, 1))
-        ax.set_yticks(np.arange(0, max_y + 1, 1))
-        ax.set_zticks(np.arange(0, max_z + 1, 1))
-
-        # Set a title
-        ax.set_title('Vista 3D de Todos los Espacios')
-
-        # Display the plot in the Tkinter window
-        canvas = FigureCanvasTkAgg(fig, master=ventana_3d)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-
-
-
-    def mostrar_vista_2d(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para visualizar")
-            return
-
-        plt.figure(figsize=(10, 8))
-        for espacio in self.sistema.espacios:
-            length = width = np.sqrt(espacio.area)
-            color = 'green' if espacio.es_habitable() else 'red'
-            plt.gca().add_patch(plt.Rectangle((0, 0), length, width, color=color, alpha=0.5))
-            plt.text(length / 2, width / 2, espacio.nombre, horizontalalignment='center', verticalalignment='center')
-
-        plt.xlim(0, max(np.sqrt(e.area) for e in self.sistema.espacios))
-        plt.ylim(0, max(np.sqrt(e.area) for e in self.sistema.espacios))
-        plt.title('Vista 2D de Todos los Espacios')
-        plt.xlabel('Longitud (m)')
-        plt.ylabel('Anchura (m)')
-        plt.grid()
-        plt.show()
-
-    def mostrar_control_dispositivos(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para controlar dispositivos")
-            return
-
-        dialogo = tk.Toplevel(self.root)
-        dialogo.title("Control de Dispositivos de Iluminación")
-
-        dispositivo_var = tk.StringVar()
-        dispositivo_combo = ttk.Combobox(dialogo, textvariable=dispositivo_var)
-        dispositivo_combo['values'] = [f"{dispositivo.tipo} (Estado: {'Encendido' if dispositivo.estado else 'Apagado'})"
-                                        for espacio in self.sistema.espacios
-                                        for dispositivo in espacio.dispositivos_iluminacion]
-        dispositivo_combo.grid(row=0, column=0, pady=5)
-
-        ttk.Button(dialogo, text="Encender", command=lambda: self.control_dispositivo(dispositivo_var.get(), True)).grid(row=1, column=0, pady=5)
-        ttk.Button(dialogo, text="Apagar", command=lambda: self.control_dispositivo(dispositivo_var.get(), False)).grid(row=2, column=0, pady=5)
-
-    def control_dispositivo(self, dispositivo_info: str, encender: bool):
-        tipo_dispositivo = dispositivo_info.split(" (")[0]
-        for espacio in self.sistema.espacios:
-            for dispositivo in espacio.dispositivos_iluminacion:
-                if dispositivo.tipo == tipo_dispositivo:
-                    if encender:
-                        dispositivo.encender()
-                    else:
-                        dispositivo.apagar()
-                    messagebox.showinfo("Control de Dispositivo", f"{tipo_dispositivo} ha sido {'encendido' if encender else 'apagado'}.")
-                    return
-        messagebox.showwarning("Advertencia", "Dispositivo no encontrado.")
-
-    def mostrar_dialogo_espacio(self):
-        dialogo = tk.Toplevel(self.root)
-        dialogo.title("Agregar Nuevo Espacio")
-
-        campos = {
-            "Nombre": "",
-            "Área (m²)": "0.0",
-            "Capacidad": "0",
-            "Actividad Principal": "",
-            "Duración Actividad (h)": "0.0",
-            "Es Exterior": "No"
-        }
-
-        row = 0
-        entries = {}
-        for campo, valor in campos.items():
-            ttk.Label(dialogo, text=campo).grid(row=row, column=0, pady=5)
-            entry = ttk.Entry(dialogo)
-            entry.insert(0, valor)
-            entry.grid(row=row, column=1, pady=5)
-            entries[campo] = entry
-            row += 1
-
-        ttk.Label(dialogo, text="Actividad Principal:").grid(row=row, column=0, pady=5)
-        actividad_var = tk.StringVar()
-        actividad_combo = ttk.Combobox(dialogo, textvariable=actividad_var)
-        actividad_combo['values'] = ["Reuniones", "Estudio", "Descanso"]
-        actividad_combo.grid(row=row, column=1, pady=5)
-
-        def guardar_espacio():
-            try:
-                nombre = entries["Nombre"].get().strip()
-                if not nombre:
-                    raise ValueError("El nombre del espacio no puede estar vacío.")
-
-                area = float(entries["Área (m²)"].get())
-                if area <= 0:
-                    raise ValueError("El área debe ser un número positivo.")
-
-                capacidad = int(entries["Capacidad"].get())
-                if capacidad < 0:
-                    raise ValueError("La capacidad no puede ser negativa.")
-
-                duracion = float(entries["Duración Actividad (h)"].get())
-                if duracion < 0:
-                    raise ValueError("La duración de la actividad no puede ser negativa.")
-
-                es_exterior = entries["Es Exterior"].get().strip().lower() == "sí"
-
-                espacio = Espacio(
-                    nombre,
-                    area,
-                    capacidad,
-                    actividad_var.get(),
-                    duracion,
-                    es_exterior
-                )
-                self.sistema.agregar_espacio(espacio)
-                self.actualizar_visualizacion()
-                dialogo.destroy()
-            except ValueError as e:
-                messagebox.showerror("Error", str(e))
-
-        ttk.Button(dialogo, text="Guardar",
-                   command=guardar_espacio).grid(row=row + 1, column=0, columnspan=2, pady=10)
-
-    def mostrar_dialogo_dispositivo(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "Primero debe crear al menos un espacio")
-            return
-
-        dialogo = tk.Toplevel(self.root)
-        dialogo.title("Agregar Dispositivo de Iluminación")
-
-        campos = {
-            "Tipo": "",
-            "Potencia (W)": "0.0",
-            "Eficiencia (lm/W)": "0.0",
-            "Temperatura Color (K)": "0.0"
-        }
-
-        row = 0
-        entries = {}
-        for campo, valor in campos.items():
-            ttk.Label(dialogo, text=campo).grid(row=row, column=0, pady=5)
-            entry = ttk.Entry(dialogo)
-            entry.insert(0, valor)
-            entry.grid(row=row, column=1, pady=5)
-            entries[campo] = entry
-            row += 1
-
-        ttk.Label(dialogo, text="Espacio:").grid(row=row, column=0, pady=5)
-        espacio_var = tk.StringVar()
-        espacio_combo = ttk.Combobox(dialogo, textvariable=espacio_var)
-        espacio_combo['values'] = [espacio.nombre for espacio in self.sistema.espacios]
-        espacio_combo.grid(row=row, column=1, pady=5)
-
-        def guardar_dispositivo():
-            try:
-                dispositivo = DispositivoIluminacion(
-                    entries["Tipo"].get(),
-                    float(entries["Potencia (W)"].get()),
-                    float(entries["Eficiencia (lm/W)"].get()),
-                    float(entries["Temperatura Color (K)"].get())
-                )
-
-                for espacio in self.sistema.espacios:
-                    if espacio.nombre == espacio_var.get():
-                        espacio.dispositivos_iluminacion.append(dispositivo)
-                        break
-
-                self.actualizar_visualizacion()
-                dialogo.destroy()
-            except ValueError:
-                messagebox.showerror("Error", "Por favor, ingrese valores válidos")
-
-        ttk.Button(dialogo, text="Guardar",
-                   command=guardar_dispositivo).grid(row=row + 1, column=0, columnspan=2, pady=10)
-
-    def mostrar_analisis(self):
-    if not self.sistema.espacios:
-        messagebox.showwarning("Advertencia", "No hay espacios para analizar")
-        return
-
-    hora_dia = int(self.hora_var.get())
-    clima = self.clima_var.get()
-    resultados = self.sistema.analizar_iluminacion_global(hora_dia)
-
-    ventana = tk.Toplevel(self.root)
-    ventana.title("Análisis de Iluminación")
-
-    texto = tk.Text(ventana, wrap=tk.WORD, width=60, height=20)
-    texto.pack(padx=10, pady=10)
-
-    for espacio in self.sistema.espacios:
-        es_habitable = resultados[espacio.nombre]['habitable']
-        recomendacion = self.recomendaciones.obtener_recomendacion(
-            espacio.actividad_principal, 
-            espacio.es_exterior, 
-            clima,
-            es_habitable
-        )
-        
-        texto.insert(tk.END, f"\nEspacio: {espacio.nombre}\n")
-        texto.insert(tk.END, f"Nivel de iluminación: {resultados[espacio.nombre]['nivel_iluminacion']:.2f} lux\n")
-        texto.insert(tk.END, f"Lumens: {resultados[espacio.nombre]['lumens']:.2f} lm\n")
-        texto.insert(tk.END, f"Uniformidad: {resultados[espacio.nombre]['uniformidad']:.2f}\n")
-        texto.insert(tk.END, f"Deslumbramiento: {resultados[espacio.nombre]['deslumbramiento']:.2f}\n")
-        texto.insert(tk.END, f"Rendimiento de color: {resultados[espacio.nombre]['rendimiento_color']:.2f}\n")
-        texto.insert(tk.END, f"¿Es habitable? {'Sí' if es_habitable else 'No'}\n")
-        texto.insert(tk.END, "Recomendaciones:\n")
-        for rec in recomendacion:
-            texto.insert(tk.END, f"- {rec}\n")
-
-    def mostrar_optimizacion(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para optimizar")
-            return
-
-        optimizaciones = self.sistema.optimizar_consumo_energetico()
-
-        ventana = tk.Toplevel(self.root)
-        ventana.title("Optimización de Consumo Energético")
-
-        texto = tk.Text(ventana, wrap=tk.WORD, width=60, height=20)
-        texto.pack(padx=10, pady=10)
-
-        for espacio, datos in optimizaciones.items():
-            texto.insert(tk.END, f"\nEspacio: {espacio}\n")
-            texto.insert(tk.END, f"Ajuste de Intensidad: {datos['ajuste_intensidad']:.2f}%\n")
-            texto.insert(tk.END, f"Ahorro Estimado: {datos['ahorro_estimado']:.2f}%\n")
-
-    def actualizar_visualizacion(self):
-        self.fig.clear()
-        for espacio in self.sistema.espacios:
-            espacio.visualizador.visualizar_espacio_3d(self.sistema.espacios)
-        self.canvas.draw()
-
-
-# Simulación dinámica de condiciones externas
-class SimuladorCondicionesExternas:
-    def __init__(self, sistema):
-        self.sistema = sistema
-        self.hora_dia = 8  # Comienza a las 8 AM
-        self.clima = "despejado"
-        self.iluminancia_exterior = 10000  # en lux
-        self.running = True
-
-    def simular(self):
-        while self.running:
-            self.hora_dia = (self.hora_dia + 1) % 24
-            if self.hora_dia < 6 or self.hora_dia > 18:
-                self.iluminancia_exterior = 0  # Noche
+        for i, espacio in enumerate(self.building.espacios):
+            color = 'r'  
+            if espacio.es_habitable():
+                color = 'g'  
             else:
-                self.iluminancia_exterior = 10000  # Día
-            time.sleep(60)  # Simula un minuto cada segundo
+                if abs(espacio.offset_pct - 100) < 10:  
+                    color = 'y'  
+            
+            ax.scatter(espacio.x, espacio.y, color=color, label=espacio.nombre if i == 0 else "")
+            
+            for j, is_adj in enumerate(self.adjacency_checker.adjacency_matrix_2d[i]):
+                if is_adj:
+                    ax.plot([espacio.x, self.building.espacios[j].x],
+                            [espacio.y, self.building.espacios[j].y], 'r-')
 
-    def iniciar_simulacion(self):
-        threading.Thread(target=self.simular, daemon=True).start()
+    def plot_colored_graph(self):
+        ax = self.axs[0]
+        ax.set_title("2D Adjacency (Per Floor)")
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+
+        colors = self.greedy_coloring()  # Get the greedy coloring result
+
+        for i, espacio in enumerate(self.building.espacios):
+            ax.scatter(espacio.x, espacio.y, color=colors[i], label=espacio.nombre if i == 0 else "")
+            for j, is_adj in enumerate(self.adjacency_checker.adjacency_matrix_2d[i]):
+                if is_adj:
+                    ax.plot([espacio.x, self.building.espacios[j].x],
+                            [espacio.y, self.building.espacios[j].y], 'r-')
+
+    def plot_3d_graph(self):
+        ax = self.axs[1]
+        ax.set_title("3D Adjacency Graph")
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+
+        for i, espacio in enumerate(self.building.espacios):
+            ax.scatter(espacio.x, espacio.y, espacio.z, color='g', label=espacio.nombre if i == 0 else "")
+            for j, is_adj in enumerate(self.adjacency_checker.adjacency_matrix_3d[i]):
+                if is_adj:
+                    ax.plot([espacio.x, self.building.espacios[j].x],
+                            [espacio.y, self.building.espacios[j].y],
+                            [espacio.z, self.building.espacios[j].z], 'r-')
+
+        plt.legend()
 
 
-# Inicialización del sistema y la interfaz gráfica
+
+
 building = Building("Edificio Central", floors=3, floor_width=20, floor_length=20)
 
-building.add_espacio(Espacio("Sala Reuniones", area=25, capacidad_ocupacion=5, 
-                             actividad_principal="Reuniones", duracion_actividad=2, x=5, y=5, z=0))
+building.add_espacio(Espacio("Sala Reuniones", area=25, capacidad_ocupacion=5, actividad_principal="Reuniones", duracion_actividad=2, x=5, y=5, z=1))
+building.add_espacio(Espacio("Biblioteca", area=30, capacidad_ocupacion=8, actividad_principal="Estudio", duracion_actividad=4, x=10, y=15, z=1))
+building.add_espacio(Espacio("Dormitorio", area=20, capacidad_ocupacion=2, actividad_principal="Descanso", duracion_actividad=8, x=3, y=3, z=1))
+building.add_espacio(Espacio("Dormitorio", area=20, capacidad_ocupacion=2, actividad_principal="Estudio", duracion_actividad=8, x=15, y=15, z=1))
+building.add_espacio(Espacio("Dormitorio", area=20, capacidad_ocupacion=2, actividad_principal="Reuniones", duracion_actividad=8, x=6, y=9, z=1))
+building.add_espacio(Espacio("Dormitorio", area=20, capacidad_ocupacion=2, actividad_principal="Estudio", duracion_actividad=8, x=2, y=1, z=1))
+building.add_espacio(Espacio("Dormitorio", area=20, capacidad_ocupacion=2, actividad_principal="Descanso", duracion_actividad=8, x=10, y=10, z=1))
 
-building.add_espacio(Espacio("Biblioteca", area=30, capacidad_ocupacion=8, 
-                             actividad_principal="Estudio", duracion_actividad=4, x=10, y=15, z=1))
-
-building.add_espacio(Espacio("Dormitorio", area=20, capacidad_ocupacion=2, 
-                             actividad_principal="Descanso", duracion_actividad=8, x=7, y=3, z=2))
+espacio = building.espacios[0]
+dispositivo = DispositivoIluminacion(tipo="LED", potencia=3500, eficiencia_luminica=2, temperatura_color=4000)
+dispositivo.encender()
+espacio.dispositivos_iluminacion.append(dispositivo)
+print(dispositivo.obtener_flujo_luminoso())
 
 sistema = SistemaIluminacion(building)
-
-simulador = SimuladorCondicionesExternas(sistema)
-simulador.iniciar_simulacion()
-interfaz = InterfazGrafica(sistema)
+interfaz = InterfazGrafica(building)
 interfaz.root.mainloop()
