@@ -366,7 +366,13 @@ class Recomendaciones:
                         "Aumenta la iluminación en áreas exteriores para mantener la visibilidad.",
                         "Usa luces de colores cálidos para crear un ambiente acogedor."
                     ]
-                }
+                },
+                "no_habitable": [
+                    "Instalar iluminación adicional para alcanzar los 300 lux mínimos requeridos.",
+                    "Considerar la instalación de ventanas o tragaluces para aumentar la luz natural.",
+                    "Revisar y optimizar la distribución de las luminarias existentes.",
+                    "Evaluar el uso de superficies reflectantes para mejorar la distribución de luz."
+                ]
             },
             "Estudio": {
                 "interior": {
@@ -388,7 +394,13 @@ class Recomendaciones:
                         "Aumenta la iluminación en áreas exteriores para mantener la visibilidad.",
                         "Usa luces de colores cálidos para crear un ambiente acogedor."
                     ]
-                }
+                },
+                "no_habitable": [
+                    "Instalar iluminación adicional para alcanzar los 400 lux mínimos requeridos.",
+                    "Evaluar la posibilidad de añadir luz natural mediante ventanas o tragaluces.",
+                    "Considerar el uso de luminarias específicas para tareas de estudio.",
+                    "Revisar la disposición del mobiliario para optimizar el aprovechamiento de la luz."
+                ]
             },
             "Descanso": {
                 "interior": {
@@ -410,14 +422,31 @@ class Recomendaciones:
                         "Asegúrate de que las áreas exteriores estén bien iluminadas.",
                         "Usa luces suaves para crear un ambiente acogedor."
                     ]
-                }
+                },
+                "no_habitable": [
+                    "Instalar iluminación adicional para alcanzar los 200 lux mínimos requeridos.",
+                    "Considerar el uso de reguladores de intensidad para ajustar la iluminación.",
+                    "Evaluar la instalación de luces indirectas para crear ambientes más relajantes.",
+                    "Revisar la temperatura de color de las luminarias existentes."
+                ]
             }
         }
 
-    def obtener_recomendacion(self, actividad_principal: str, es_exterior: bool, clima: str) -> List[str]:
+    def obtener_recomendacion(self, actividad_principal: str, es_exterior: bool, clima: str, es_habitable: bool = True) -> List[str]:
+        if not es_habitable:
+            return self.recomendaciones.get(actividad_principal, {}).get("no_habitable", [
+                "Este espacio no cumple con los requisitos mínimos de iluminación para la actividad actual.",
+                "Se recomienda:",
+                "- Aumentar los niveles de iluminación",
+                "- Considerar cambiar la actividad del espacio",
+                "- Consultar con un especialista en iluminación"
+            ])
+        
         tipo_ubicacion = "exterior" if es_exterior else "interior"
-        return self.recomendaciones.get(actividad_principal, {}).get(tipo_ubicacion, {}).get(clima, ["No hay recomendaciones disponibles."])
-
+        return self.recomendaciones.get(actividad_principal, {}).get(tipo_ubicacion, {}).get(clima, [
+            "No hay recomendaciones específicas disponibles para esta combinación de actividad, ubicación y clima.",
+            "Por favor, consulte las guías generales de iluminación."
+        ])
 
 class InterfazGrafica:
     def __init__(self, sistema: 'SistemaIluminacion'):
@@ -940,32 +969,39 @@ class InterfazGrafica:
                    command=guardar_dispositivo).grid(row=row + 1, column=0, columnspan=2, pady=10)
 
     def mostrar_analisis(self):
-        if not self.sistema.espacios:
-            messagebox.showwarning("Advertencia", "No hay espacios para analizar")
-            return
+    if not self.sistema.espacios:
+        messagebox.showwarning("Advertencia", "No hay espacios para analizar")
+        return
 
-        hora_dia = int(self.hora_var.get())
-        clima = self.clima_var.get()
-        resultados = self.sistema.analizar_iluminacion_global(hora_dia)
+    hora_dia = int(self.hora_var.get())
+    clima = self.clima_var.get()
+    resultados = self.sistema.analizar_iluminacion_global(hora_dia)
 
-        ventana = tk.Toplevel(self.root)
-        ventana.title("Análisis de Iluminación")
+    ventana = tk.Toplevel(self.root)
+    ventana.title("Análisis de Iluminación")
 
-        texto = tk.Text(ventana, wrap=tk.WORD, width=60, height=20)
-        texto.pack(padx=10, pady=10)
+    texto = tk.Text(ventana, wrap=tk.WORD, width=60, height=20)
+    texto.pack(padx=10, pady=10)
 
-        for espacio in self.sistema.espacios:
-            recomendacion = self.recomendaciones.obtener_recomendacion(espacio.actividad_principal, espacio.es_exterior, clima)
-            texto.insert(tk.END, f"\nEspacio: {espacio.nombre}\n")
-            texto.insert(tk.END, f"Nivel de iluminación: {resultados[espacio.nombre]['nivel_iluminacion']:.2f} lux\n")
-            texto.insert(tk.END, f"Lumens: {resultados[espacio.nombre]['lumens']:.2f} lm\n")
-            texto.insert(tk.END, f"Uniformidad: {resultados[espacio.nombre]['uniformidad']:.2f}\n")
-            texto.insert(tk.END, f"Deslumbramiento: {resultados[espacio.nombre]['deslumbramiento']:.2f}\n")
-            texto.insert(tk.END, f"Rendimiento de color: {resultados[espacio.nombre]['rendimiento_color']:.2f}\n")
-            texto.insert(tk.END, f"¿Es habitable? {'Sí' if resultados[espacio.nombre]['habitable'] else 'No'}\n")
-            texto.insert(tk.END, "Recomendaciones:\n")
-            for rec in recomendacion:
-                texto.insert(tk.END, f"- {rec}\n")
+    for espacio in self.sistema.espacios:
+        es_habitable = resultados[espacio.nombre]['habitable']
+        recomendacion = self.recomendaciones.obtener_recomendacion(
+            espacio.actividad_principal, 
+            espacio.es_exterior, 
+            clima,
+            es_habitable
+        )
+        
+        texto.insert(tk.END, f"\nEspacio: {espacio.nombre}\n")
+        texto.insert(tk.END, f"Nivel de iluminación: {resultados[espacio.nombre]['nivel_iluminacion']:.2f} lux\n")
+        texto.insert(tk.END, f"Lumens: {resultados[espacio.nombre]['lumens']:.2f} lm\n")
+        texto.insert(tk.END, f"Uniformidad: {resultados[espacio.nombre]['uniformidad']:.2f}\n")
+        texto.insert(tk.END, f"Deslumbramiento: {resultados[espacio.nombre]['deslumbramiento']:.2f}\n")
+        texto.insert(tk.END, f"Rendimiento de color: {resultados[espacio.nombre]['rendimiento_color']:.2f}\n")
+        texto.insert(tk.END, f"¿Es habitable? {'Sí' if es_habitable else 'No'}\n")
+        texto.insert(tk.END, "Recomendaciones:\n")
+        for rec in recomendacion:
+            texto.insert(tk.END, f"- {rec}\n")
 
     def mostrar_optimizacion(self):
         if not self.sistema.espacios:
