@@ -76,7 +76,6 @@ class Ocupante:
             'nivel_satisfaccion': np.random.uniform(0, 100)
         }
 
-
 class ColoracionEspacio:
     def __init__(self, espacio: 'Espacio'):
         self.espacio = espacio
@@ -203,12 +202,16 @@ class VisualizadorEspacio:
 
 class Espacio:
     def __init__(self, nombre: str, area: float, capacidad_ocupacion: int,
-                 actividad_principal: str, duracion_actividad: float, es_exterior: bool = False):
+                 actividad_principal: str, duracion_actividad: float, 
+                 x: float, y: float, z: int, es_exterior: bool = False):
         self.nombre = nombre
         self.area = area
         self.capacidad_ocupacion = capacidad_ocupacion
         self.actividad_principal = actividad_principal
         self.duracion_actividad = duracion_actividad
+        self.x = x  
+        self.y = y  
+        self.z = z  
         self.es_exterior = es_exterior
         self.ventanas = []
         self.dispositivos_iluminacion = []
@@ -217,6 +220,7 @@ class Espacio:
         self.superficies = []
         self.coloracion = ColoracionEspacio(self)
         self.visualizador = VisualizadorEspacio(self)
+
 
     def calcular_iluminacion_total(self, hora_dia: int) -> float:
         self.nivel_iluminacion = PropagacionLuz.calcular_iluminacion_espacio(self, hora_dia)
@@ -232,6 +236,21 @@ class Espacio:
             "Descanso": 200,
         }
         return self.nivel_iluminacion >= thresholds.get(self.actividad_principal, 0)
+
+
+class Building:
+    def __init__(self, nombre: str, floors: int, floor_width: float, floor_length: float):
+        self.nombre = nombre
+        self.floors = floors
+        self.floor_width = floor_width
+        self.floor_length = floor_length
+        self.espacios = []
+
+    def add_espacio(self, espacio: Espacio):
+        if 0 <= espacio.x <= self.floor_width and 0 <= espacio.y <= self.floor_length and 0 <= espacio.z < self.floors:
+            self.espacios.append(espacio)
+        else:
+            raise ValueError("Espacio coordinates are out of building bounds.")
 
 
 class PropagacionLuz:
@@ -283,15 +302,20 @@ class AnalizadorConfortVisual:
 
 
 class SistemaIluminacion:
-    def __init__(self):
-        self.espacios = []
+    def __init__(self, building: Building):
+        self.building = building  # Reference to the building
         self.dispositivos_iluminacion = []
         self.sensores_luz = []
 
-    def agregar_espacio(self, espacio: Espacio):
-        self.espacios.append(espacio)
+    @property
+    def espacios(self):
+        return self.building.espacios  # Get spaces directly from the building
 
     def analizar_iluminacion_global(self, hora_dia: int) -> Dict:
+        if not self.espacios:
+            print("No hay espacios en el edificio.")
+            return {}
+
         resultados = {}
         for espacio in self.espacios:
             resultados[espacio.nombre] = {
@@ -305,6 +329,10 @@ class SistemaIluminacion:
         return resultados
 
     def optimizar_consumo_energetico(self) -> Dict:
+        if not self.espacios:
+            print("No hay espacios en el edificio para optimizar.")
+            return {}
+
         optimizaciones = {}
         for espacio in self.espacios:
             optimizaciones[espacio.nombre] = {
@@ -312,6 +340,7 @@ class SistemaIluminacion:
                 'ahorro_estimado': np.random.uniform(5, 30)
             }
         return optimizaciones
+
 
 
 class Recomendaciones:
@@ -537,37 +566,28 @@ class InterfazGrafica:
             return
 
         ventana_3d = tk.Toplevel(self.root)
-        ventana_3d.title("Vista 3D de Todos los Espacios")
+        ventana_3d.title("Vista 3D del Edificio")
 
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection='3d')
 
         for espacio in self.sistema.espacios:
-            length = width = np.sqrt(espacio.area)
-            height = 3.0
+            color = 'green' if espacio.es_habitable() else 'red'
+            ax.scatter(espacio.x, espacio.y, espacio.z, c=color, s=100)
+            ax.text(espacio.x, espacio.y, espacio.z + 0.1, f"{espacio.nombre}", color='black', fontsize=8)
 
-            x = np.array([[0, length], [0, length]])
-            y = np.array([[0, 0], [width, width]])
-            z = np.array([[0, 0], [0, 0]])
-            ax.plot_surface(x, y, z, alpha=0.5, color='lightblue')
-
-            ax.scatter(length / 2, width / 2, 0, c='black', s=100)
-
-            zonas = espacio.coloracion._dividir_espacio_en_zonas()
-            for zona in zonas:
-                x_centro, y_centro = zona['centro']
-                color = 'green' if espacio.es_habitable() else 'red'
-                ax.scatter(x_centro, y_centro, 0, c=color, s=50)
-                ax.text(x_centro, y_centro, 0.1, f"{espacio.nombre}", color='black', fontsize=10)
-
-        ax.set_xlim(0, max(np.sqrt(e.area) for e in self.sistema.espacios))
-        ax.set_ylim(0, max(np.sqrt(e.area) for e in self.sistema.espacios))
-        ax.set_zlim(0, height)
-        ax.set_title('Vista 3D de Todos los Espacios')
+        ax.set_xlim(0, self.sistema.floor_width)
+        ax.set_ylim(0, self.sistema.floor_length)
+        ax.set_zlim(0, self.sistema.floors)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Floor (Z)')
+        ax.set_title('Vista 3D del Edificio')
 
         canvas = FigureCanvasTkAgg(fig, master=ventana_3d)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
 
     def mostrar_vista_2d(self):
         if not self.sistema.espacios:
@@ -711,32 +731,43 @@ class InterfazGrafica:
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection='3d')
 
+        # Plot each Espacio as a single point
         for espacio in self.sistema.espacios:
-            length = width = np.sqrt(espacio.area)
-            height = 3.0
+            x, y, z = espacio.x, espacio.y, espacio.z  # Correct reference
+            color = 'green' if espacio.es_habitable() else 'red'
+            ax.scatter(x, y, z, c=color, s=50)
+            ax.text(x, y, z + 0.2, espacio.nombre, color='black', fontsize=8)
 
-            x = np.array([[0, length], [0, length]])
-            y = np.array([[0, 0], [width, width]])
-            z = np.array([[0, 0], [0, 0]])
-            ax.plot_surface(x, y, z, alpha=0.5, color='lightblue')
+        # Determine the limits dynamically
+        max_x = max(e.x for e in self.sistema.espacios) + 1
+        max_y = max(e.y for e in self.sistema.espacios) + 1
+        max_z = max(e.z for e in self.sistema.espacios) + 1
 
-            ax.scatter(length / 2, width / 2, 0, c='black', s=100)
+        # Set axis limits
+        ax.set_xlim(0, max_x)
+        ax.set_ylim(0, max_y)
+        ax.set_zlim(0, max_z)
 
-            zonas = espacio.coloracion._dividir_espacio_en_zonas()
-            for zona in zonas:
-                x_centro, y_centro = zona['centro']
-                color = 'green' if espacio.es_habitable() else 'red'
-                ax.scatter(x_centro, y_centro, 0, c=color, s=50)
-                ax.text(x_centro, y_centro, 0.1, f"{espacio.nombre}", color='black', fontsize=10)
+        # Set axis labels
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
 
-        ax.set_xlim(0, max(np.sqrt(e.area) for e in self.sistema.espacios))
-        ax.set_ylim(0, max(np.sqrt(e.area) for e in self.sistema.espacios))
-        ax.set_zlim(0, height)
+        # **Set grid spacing to 1 unit**
+        ax.set_xticks(np.arange(0, max_x + 1, 1))
+        ax.set_yticks(np.arange(0, max_y + 1, 1))
+        ax.set_zticks(np.arange(0, max_z + 1, 1))
+
+        # Set a title
         ax.set_title('Vista 3D de Todos los Espacios')
 
+        # Display the plot in the Tkinter window
         canvas = FigureCanvasTkAgg(fig, master=ventana_3d)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+
+
 
     def mostrar_vista_2d(self):
         if not self.sistema.espacios:
@@ -984,7 +1015,19 @@ class SimuladorCondicionesExternas:
 
 
 # Inicialización del sistema y la interfaz gráfica
-sistema = SistemaIluminacion()
+building = Building("Edificio Central", floors=3, floor_width=20, floor_length=20)
+
+building.add_espacio(Espacio("Sala Reuniones", area=25, capacidad_ocupacion=5, 
+                             actividad_principal="Reuniones", duracion_actividad=2, x=5, y=5, z=0))
+
+building.add_espacio(Espacio("Biblioteca", area=30, capacidad_ocupacion=8, 
+                             actividad_principal="Estudio", duracion_actividad=4, x=10, y=15, z=1))
+
+building.add_espacio(Espacio("Dormitorio", area=20, capacidad_ocupacion=2, 
+                             actividad_principal="Descanso", duracion_actividad=8, x=7, y=3, z=2))
+
+sistema = SistemaIluminacion(building)
+
 simulador = SimuladorCondicionesExternas(sistema)
 simulador.iniciar_simulacion()
 interfaz = InterfazGrafica(sistema)
