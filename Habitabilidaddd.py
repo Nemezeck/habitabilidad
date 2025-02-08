@@ -356,6 +356,10 @@ class SistemaIluminacion:
 
     def calcular_exceso_iluminacion(self, espacio : Espacio):
         threshold = self.get_threshold(espacio.actividad_principal)  
+        if not espacio.dispositivos_iluminacion or all(not obj.estado for obj in espacio.dispositivos_iluminacion):
+            print("The array is empty or all objects have estado=False")
+            return 0
+
         if espacio.nivel_iluminacion <= threshold:
             return 0  
         
